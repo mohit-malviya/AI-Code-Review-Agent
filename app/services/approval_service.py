@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -23,13 +24,16 @@ class BaseApprovalStore(ABC):
 class JsonFileApprovalStore(BaseApprovalStore):
     """
     Local JSON file storage for local development and testing.
+    Thread-safe and atomic file persistence.
     """
     def __init__(self, file_path: str | None = None):
         self.file_path = file_path or os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "approvals_db.json"
         )
-        self.cache: dict[str, dict[str, Any]] = self._load()
+        self._lock = threading.RLock()
+        with self._lock:
+            self.cache: dict[str, dict[str, Any]] = self._load()
 
     def _load(self) -> dict[str, dict[str, Any]]:
         if not os.path.exists(self.file_path):
@@ -42,20 +46,29 @@ class JsonFileApprovalStore(BaseApprovalStore):
             return {}
 
     def _persist(self) -> None:
+        temp_path = f"{self.file_path}.tmp.{uuid4()}"
         try:
-            with open(self.file_path, "w", encoding="utf-8") as f:
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(self.cache, f, indent=4)
+            os.replace(temp_path, self.file_path)
         except Exception as e:
             print(f"Error saving approvals database to {self.file_path}: {e}")
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     def save(self, approval_id: str, data: dict[str, Any]) -> None:
-        self.cache[approval_id] = data
-        self._persist()
+        with self._lock:
+            self.cache[approval_id] = data
+            self._persist()
 
     def get(self, approval_id: str) -> dict[str, Any] | None:
-        if approval_id not in self.cache:
-            self.cache = self._load()
-        return self.cache.get(approval_id)
+        with self._lock:
+            if approval_id not in self.cache:
+                self.cache.update(self._load())
+            return self.cache.get(approval_id)
 
 
 class FirestoreApprovalStore(BaseApprovalStore):
@@ -74,16 +87,17 @@ class FirestoreApprovalStore(BaseApprovalStore):
 
     def save(self, approval_id: str, data: dict[str, Any]) -> None:
         if self.db is None:
-            return
+            raise RuntimeError("Firestore client is not initialized.")
         try:
             doc_ref = self.db.collection(self.collection_name).document(approval_id)
             doc_ref.set(data)
         except Exception as e:
             print(f"Error saving approval {approval_id} to Firestore: {e}")
+            raise RuntimeError(f"Failed to save approval {approval_id} to Firestore: {e}") from e
 
     def get(self, approval_id: str) -> dict[str, Any] | None:
         if self.db is None:
-            return None
+            raise RuntimeError("Firestore client is not initialized.")
         try:
             doc_ref = self.db.collection(self.collection_name).document(approval_id)
             doc = doc_ref.get()
@@ -92,7 +106,7 @@ class FirestoreApprovalStore(BaseApprovalStore):
             return None
         except Exception as e:
             print(f"Error fetching approval {approval_id} from Firestore: {e}")
-            return None
+            raise RuntimeError(f"Failed to fetch approval {approval_id} from Firestore: {e}") from e
 
 
 def _init_store() -> BaseApprovalStore:
@@ -118,6 +132,17 @@ def load_approvals() -> dict[str, dict[str, Any]]:
     """Legacy helper for loading approvals."""
     if isinstance(_STORE, JsonFileApprovalStore):
         return _STORE.cache
+    elif isinstance(_STORE, FirestoreApprovalStore):
+        if _STORE.db is None:
+            raise RuntimeError("Firestore client is not initialized.")
+        try:
+            results = {}
+            docs = _STORE.db.collection(_STORE.collection_name).stream()
+            for doc in docs:
+                results[doc.id] = doc.to_dict()
+            return results
+        except Exception as e:
+            raise RuntimeError(f"Failed to load approvals from Firestore: {e}") from e
     return {}
 
 

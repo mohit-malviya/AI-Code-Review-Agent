@@ -9,8 +9,8 @@ param (
     [string]$StorageBackend = "firestore"
 )
 
-if (-not $ProjectId) {
-    Write-Error "Please specify -ProjectId or set GCP_PROJECT_ID environment variable."
+if (-not $ProjectId -or $ProjectId -eq "your-gcp-project-id") {
+    Write-Error "Please specify a valid -ProjectId or set the GCP_PROJECT_ID environment variable."
     exit 1
 }
 

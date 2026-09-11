@@ -92,7 +92,10 @@ def test_webhook_endpoint_allows_when_secret_unset():
 
 
 def test_firestore_store_fallback():
-    """Verify FirestoreApprovalStore falls back gracefully when Firestore is unavailable."""
+    """Verify FirestoreApprovalStore falls back gracefully and alerts callers if uninitialized."""
     fs = FirestoreApprovalStore()
-    # In local testing without GCP credentials or firestore, db will be None
-    assert fs.get("non-existent-id") is None
+    assert fs.db is None
+    with pytest.raises(RuntimeError, match="Firestore client is not initialized"):
+        fs.get("non-existent-id")
+    with pytest.raises(RuntimeError, match="Firestore client is not initialized"):
+        fs.save("non-existent-id", {})

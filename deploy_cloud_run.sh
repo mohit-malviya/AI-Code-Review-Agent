@@ -10,6 +10,21 @@ SERVICE_NAME="${SERVICE_NAME:-ai-code-review-agent}"
 REGION="${GCP_REGION:-us-central1}"
 STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
 
+# Validate Project ID
+if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "your-gcp-project-id" ]]; then
+  echo "==================================================================" >&2
+  echo " ERROR: GCP PROJECT_ID is not configured!" >&2
+  echo "==================================================================" >&2
+  echo " The GCP_PROJECT_ID is currently empty or set to the placeholder:" >&2
+  echo "   'your-gcp-project-id'" >&2
+  echo "" >&2
+  echo " Please set your Google Cloud Project ID by either:" >&2
+  echo "   1. export GCP_PROJECT_ID='your-actual-project-id'" >&2
+  echo "   2. Pass PROJECT_ID directly when invoking this script." >&2
+  echo "==================================================================" >&2
+  exit 1
+fi
+
 echo "=================================================================="
 echo " Deploying AI Code Review Agent to Google Cloud Run"
 echo " Project:  ${PROJECT_ID}"
