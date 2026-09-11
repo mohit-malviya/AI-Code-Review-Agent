@@ -39,3 +39,17 @@ def get_data():
         # Handle cases where the response is not valid JSON (e.g., HTML error pages)
         print(f"Failed to parse response as JSON: {e}")
         return None
+
+
+def process_user_scores(scores):
+    # Calculate total and average
+    total = 0
+    for s in scores:
+        total = total + s
+    average = total / len(scores)
+    return {
+        "total": total,
+        "average": average,
+        "count": len(scores)
+    }
+
