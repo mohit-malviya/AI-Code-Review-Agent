@@ -42,14 +42,40 @@ def get_data():
 
 
 def process_user_scores(scores):
+    """
+    Processes a list of user scores to calculate the total, average, and count.
+
+    This function safely handles empty lists or collections to avoid ZeroDivisionError.
+    If the input list 'scores' is empty, it returns a dictionary with 'total',
+    'average', and 'count' all set to 0.
+
+    Args:
+        scores (list of num): A list of numerical scores.
+
+    Returns:
+        dict: A dictionary containing:
+            - "total": the sum of all scores (int/float)
+            - "average": the average score (float) or 0.0 if no scores
+            - "count": the total number of scores (int)
+    """
+    # Guard clause to check if 'scores' is empty or None.
+    # This prevents raising a ZeroDivisionError when calculating the average.
+    if not scores:
+        return {
+            "total": 0,
+            "average": 0.0,
+            "count": 0
+        }
+
     # Calculate total and average
     total = 0
     for s in scores:
         total = total + s
+
+    # Safe to divide now since we have verified 'scores' is not empty
     average = total / len(scores)
     return {
         "total": total,
         "average": average,
         "count": len(scores)
     }
-
