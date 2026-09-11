@@ -1,0 +1,35 @@
+# Environments and local configuration
+.env
+.env.*
+venv/
+env/
+ENV/
+
+# Version control
+.git/
+.gitignore
+
+# Database & runtime persistence
+approvals_db.json
+app/approvals_db.json
+*.db
+*.sqlite3
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Tests and documentation
+tests/
+README.md
+LICENSE
+ai code review.txt
+*.log
+
+# Tooling and configs
+.pre-commit-config.yaml
+.gitleaks.toml
+.vscode/
+.idea/

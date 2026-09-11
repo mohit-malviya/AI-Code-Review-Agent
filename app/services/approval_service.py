@@ -1,34 +1,141 @@
 import json
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
 
 
 # =========================================================
-# JSON approval storage for persistence across restarts
+# Approval Store Interface & Implementations
 # =========================================================
 
-APPROVALS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "approvals_db.json")
+class BaseApprovalStore(ABC):
+    @abstractmethod
+    def save(self, approval_id: str, data: dict[str, Any]) -> None:
+        pass
+
+    @abstractmethod
+    def get(self, approval_id: str) -> dict[str, Any] | None:
+        pass
+
+
+class JsonFileApprovalStore(BaseApprovalStore):
+    """
+    Local JSON file storage for local development and testing.
+    """
+    def __init__(self, file_path: str | None = None):
+        self.file_path = file_path or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "approvals_db.json"
+        )
+        self.cache: dict[str, dict[str, Any]] = self._load()
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if not os.path.exists(self.file_path):
+            return {}
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading approvals database from {self.file_path}: {e}")
+            return {}
+
+    def _persist(self) -> None:
+        try:
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                json.dump(self.cache, f, indent=4)
+        except Exception as e:
+            print(f"Error saving approvals database to {self.file_path}: {e}")
+
+    def save(self, approval_id: str, data: dict[str, Any]) -> None:
+        self.cache[approval_id] = data
+        self._persist()
+
+    def get(self, approval_id: str) -> dict[str, Any] | None:
+        if approval_id not in self.cache:
+            self.cache = self._load()
+        return self.cache.get(approval_id)
+
+
+class FirestoreApprovalStore(BaseApprovalStore):
+    """
+    Google Cloud Firestore backend for scalable, stateless Cloud Run deployment.
+    """
+    def __init__(self, collection_name: str = "approval_requests"):
+        self.collection_name = collection_name
+        try:
+            from google.cloud import firestore
+            self.db = firestore.Client()
+            print(f"Connected to Google Cloud Firestore collection: {self.collection_name}")
+        except Exception as e:
+            print(f"Warning: Failed to initialize Firestore ({e}). Falling back to local file storage.")
+            self.db = None
+
+    def save(self, approval_id: str, data: dict[str, Any]) -> None:
+        if self.db is None:
+            return
+        try:
+            doc_ref = self.db.collection(self.collection_name).document(approval_id)
+            doc_ref.set(data)
+        except Exception as e:
+            print(f"Error saving approval {approval_id} to Firestore: {e}")
+
+    def get(self, approval_id: str) -> dict[str, Any] | None:
+        if self.db is None:
+            return None
+        try:
+            doc_ref = self.db.collection(self.collection_name).document(approval_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
+        except Exception as e:
+            print(f"Error fetching approval {approval_id} from Firestore: {e}")
+            return None
+
+
+def _init_store() -> BaseApprovalStore:
+    backend = os.getenv("STORAGE_BACKEND", "").strip().lower()
+    if backend == "firestore":
+        fs_store = FirestoreApprovalStore()
+        if fs_store.db is not None:
+            return fs_store
+    return JsonFileApprovalStore()
+
+
+# Active store instance
+_STORE = _init_store()
+
+# Backwards compatibility alias for code that references _APPROVAL_REQUESTS directly
+if isinstance(_STORE, JsonFileApprovalStore):
+    _APPROVAL_REQUESTS = _STORE.cache
+else:
+    _APPROVAL_REQUESTS = {}
+
 
 def load_approvals() -> dict[str, dict[str, Any]]:
-    if not os.path.exists(APPROVALS_FILE):
-        return {}
-    try:
-        with open(APPROVALS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading approvals database: {e}")
-        return {}
+    """Legacy helper for loading approvals."""
+    if isinstance(_STORE, JsonFileApprovalStore):
+        return _STORE.cache
+    return {}
 
-def save_approvals(approvals: dict[str, dict[str, Any]]):
-    try:
-        with open(APPROVALS_FILE, "w", encoding="utf-8") as f:
-            json.dump(approvals, f, indent=4)
-    except Exception as e:
-        print(f"Error saving approvals database: {e}")
 
-_APPROVAL_REQUESTS = load_approvals()
+def save_approvals(approvals: dict[str, dict[str, Any]] | None = None) -> None:
+    """Legacy helper for saving approvals."""
+    if approvals is not None:
+        for k, v in approvals.items():
+            _STORE.save(k, v)
+    elif isinstance(_STORE, JsonFileApprovalStore):
+        _STORE._persist()
+
+
+def set_store(store: BaseApprovalStore) -> None:
+    """Allows runtime override or test mocking of the store."""
+    global _STORE, _APPROVAL_REQUESTS
+    _STORE = store
+    if isinstance(store, JsonFileApprovalStore):
+        _APPROVAL_REQUESTS = store.cache
 
 
 # =========================================================
@@ -46,55 +153,28 @@ def create_approval_request(
     Create a new approval request for AI-generated code fixes.
 
     This function DOES NOT apply any changes.
-
-    It only stores the proposed changes and waits for the
-    user to approve them.
+    It stores the proposed changes and waits for the user to approve them.
     """
 
     if not owner:
-        raise ValueError(
-            "Repository owner is required."
-        )
+        raise ValueError("Repository owner is required.")
 
     if not repository:
-        raise ValueError(
-            "Repository name is required."
-        )
+        raise ValueError("Repository name is required.")
 
     if not pull_request_number:
-        raise ValueError(
-            "Pull request number is required."
-        )
+        raise ValueError("Pull request number is required.")
 
     if not commit_sha:
-        raise ValueError(
-            "Commit SHA is required."
-        )
+        raise ValueError("Commit SHA is required.")
 
-    if not isinstance(
-        proposed_fixes,
-        list,
-    ):
-        raise ValueError(
-            "proposed_fixes must be a list."
-        )
+    if not isinstance(proposed_fixes, list):
+        raise ValueError("proposed_fixes must be a list.")
 
     if not proposed_fixes:
-        raise ValueError(
-            "At least one proposed fix is required."
-        )
+        raise ValueError("At least one proposed fix is required.")
 
-    # -----------------------------------------
-    # Generate unique approval ID
-    # -----------------------------------------
-
-    approval_id = str(
-        uuid4()
-    )
-
-    # -----------------------------------------
-    # Create approval request
-    # -----------------------------------------
+    approval_id = str(uuid4())
 
     approval_request = {
         "approval_id": approval_id,
@@ -104,49 +184,23 @@ def create_approval_request(
         "commit_sha": commit_sha,
         "proposed_fixes": proposed_fixes,
         "status": "pending",
-        "created_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "approved_at": None,
     }
 
-    _APPROVAL_REQUESTS[
-        approval_id
-    ] = approval_request
-    save_approvals(_APPROVAL_REQUESTS)
+    _STORE.save(approval_id, approval_request)
+    if isinstance(_STORE, JsonFileApprovalStore):
+        _APPROVAL_REQUESTS[approval_id] = approval_request
 
     print("=" * 60)
     print("APPROVAL REQUEST CREATED")
     print("=" * 60)
-
-    print(
-        f"Approval ID: {approval_id}"
-    )
-
-    print(
-        f"Repository: "
-        f"{owner}/{repository}"
-    )
-
-    print(
-        f"PR Number: "
-        f"{pull_request_number}"
-    )
-
-    print(
-        f"Commit SHA: "
-        f"{commit_sha}"
-    )
-
-    print(
-        f"Proposed fixes: "
-        f"{len(proposed_fixes)}"
-    )
-
-    print(
-        "Status: pending"
-    )
-
+    print(f"Approval ID: {approval_id}")
+    print(f"Repository: {owner}/{repository}")
+    print(f"PR Number: {pull_request_number}")
+    print(f"Commit SHA: {commit_sha}")
+    print(f"Proposed fixes: {len(proposed_fixes)}")
+    print("Status: pending")
     print("=" * 60)
 
     return approval_request
@@ -161,16 +215,15 @@ def get_approval_request(
 ) -> dict[str, Any] | None:
     """
     Retrieve an approval request using its ID.
-
     Returns None if the approval request does not exist.
     """
-
     if not approval_id:
         return None
 
-    return _APPROVAL_REQUESTS.get(
-        approval_id
-    )
+    res = _STORE.get(approval_id)
+    if res is None and approval_id in _APPROVAL_REQUESTS:
+        return _APPROVAL_REQUESTS.get(approval_id)
+    return res
 
 
 # =========================================================
@@ -185,65 +238,32 @@ def approve_request(
 
     IMPORTANT:
     This function ONLY changes the approval status.
-
     It does NOT modify GitHub or apply code changes.
     """
 
-    approval_request = get_approval_request(
-        approval_id
-    )
+    approval_request = get_approval_request(approval_id)
 
     if approval_request is None:
-        raise ValueError(
-            "Approval request not found."
-        )
-
-    # -----------------------------------------
-    # Prevent duplicate approval
-    # -----------------------------------------
+        raise ValueError("Approval request not found.")
 
     if approval_request["status"] == "approved":
-
         return approval_request
 
-    # -----------------------------------------
-    # Prevent approval of cancelled request
-    # -----------------------------------------
-
     if approval_request["status"] == "cancelled":
-
-        raise ValueError(
-            "This approval request has been cancelled."
-        )
-
-    # -----------------------------------------
-    # Approve request
-    # -----------------------------------------
+        raise ValueError("This approval request has been cancelled.")
 
     approval_request["status"] = "approved"
+    approval_request["approved_at"] = datetime.now(timezone.utc).isoformat()
 
-    approval_request["approved_at"] = (
-        datetime.now(
-            timezone.utc
-        ).isoformat()
-    )
-
-    _APPROVAL_REQUESTS[approval_id] = approval_request
-    save_approvals(_APPROVAL_REQUESTS)
+    _STORE.save(approval_id, approval_request)
+    if isinstance(_STORE, JsonFileApprovalStore):
+        _APPROVAL_REQUESTS[approval_id] = approval_request
 
     print("=" * 60)
     print("CODE CHANGES APPROVED")
     print("=" * 60)
-
-    print(
-        f"Approval ID: "
-        f"{approval_id}"
-    )
-
-    print(
-        "Status: approved"
-    )
-
+    print(f"Approval ID: {approval_id}")
+    print("Status: approved")
     print("=" * 60)
 
     return approval_request
@@ -258,29 +278,22 @@ def cancel_request(
 ) -> dict[str, Any]:
     """
     Cancel a pending approval request.
-
     This does not modify GitHub.
     """
 
-    approval_request = get_approval_request(
-        approval_id
-    )
+    approval_request = get_approval_request(approval_id)
 
     if approval_request is None:
-        raise ValueError(
-            "Approval request not found."
-        )
+        raise ValueError("Approval request not found.")
 
     if approval_request["status"] == "approved":
-
-        raise ValueError(
-            "An approved request cannot be cancelled."
-        )
+        raise ValueError("An approved request cannot be cancelled.")
 
     approval_request["status"] = "cancelled"
 
-    _APPROVAL_REQUESTS[approval_id] = approval_request
-    save_approvals(_APPROVAL_REQUESTS)
+    _STORE.save(approval_id, approval_request)
+    if isinstance(_STORE, JsonFileApprovalStore):
+        _APPROVAL_REQUESTS[approval_id] = approval_request
 
     return approval_request
 
@@ -295,15 +308,9 @@ def is_approved(
     """
     Check whether an approval request has been approved.
     """
-
-    approval_request = get_approval_request(
-        approval_id
-    )
+    approval_request = get_approval_request(approval_id)
 
     if approval_request is None:
         return False
 
-    return (
-        approval_request["status"]
-        == "approved"
-    )
+    return approval_request["status"] == "approved"

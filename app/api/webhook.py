@@ -1,4 +1,7 @@
 import base64
+import hashlib
+import hmac
+import json
 import os
 
 import requests
@@ -7,6 +10,7 @@ from fastapi import (
     APIRouter,
     Request,
     BackgroundTasks,
+    HTTPException,
 )
 
 from app.services.github_service import (
@@ -1244,6 +1248,32 @@ def process_pull_request_review(
 
 
 # =========================================================
+# Webhook Signature Verification
+# =========================================================
+
+def verify_github_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    """
+    Verify the GitHub webhook HMAC-SHA256 signature against GITHUB_WEBHOOK_SECRET.
+    If no secret is configured, logs a warning and allows the request.
+    """
+    secret = os.getenv("GITHUB_WEBHOOK_SECRET") or os.getenv("WEBHOOK_SECRET")
+    if not secret:
+        # Development / unconfigured mode: allow with warning
+        return True
+
+    if not signature_header:
+        return False
+
+    expected_signature = "sha256=" + hmac.new(
+        secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected_signature, signature_header)
+
+
+# =========================================================
 # Webhook Endpoint
 # =========================================================
 
@@ -1252,8 +1282,23 @@ async def github_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
+    body_bytes = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
 
-    payload = await request.json()
+    if not verify_github_signature(body_bytes, signature):
+        print("SECURITY ALERT: Invalid or missing GitHub webhook signature.")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing GitHub webhook signature.",
+        )
+
+    try:
+        payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON payload: {e}",
+        )
 
     event_type = request.headers.get(
         "X-GitHub-Event"

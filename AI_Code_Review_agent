@@ -1,0 +1,123 @@
+# AI Code Review Agent: Cloud Run Production Readiness Walkthrough
+
+This walkthrough outlines all fixes, architectural upgrades, security hardening, and deployment tooling implemented to make the **AI Code Review Agent** 100% ready for deployment to **Google Cloud Run**.
+
+---
+
+## Summary of Accomplishments
+
+| Area | Prototype State | Production State for Cloud Run |
+| :--- | :--- | :--- |
+| **Containerization** | Broken `DockerFile` (no python/pip, wrong command `python3 app.py`, no port binding). | Standard [Dockerfile](file:///c:/AI%20Code%20Review%20Agent/Dockerfile) using `python:3.11-slim`, dynamic `$PORT` binding (`uvicorn app.main:app`), optimized caching. |
+| **Build Artifacts** | Missing `.dockerignore`; `requirements.txt` was corrupted in UTF-16LE with BOM. | Added [.dockerignore](file:///c:/AI%20Code%20Review%20Agent/.dockerignore); converted [requirements.txt](file:///c:/AI%20Code%20Review%20Agent/requirements.txt) to clean UTF-8 and added `google-cloud-firestore`. |
+| **State Persistence** | Local JSON file ([approvals_db.json](file:///c:/AI%20Code%20Review%20Agent/approvals_db.json)); wiped on serverless scale-down/restart, causing 404s across multiple instances. | Pluggable storage in [approval_service.py](file:///c:/AI%20Code%20Review%20Agent/app/services/approval_service.py) supporting **Google Cloud Firestore** for Cloud Run with local JSON fallback for dev/tests. |
+| **Webhook Security** | Unauthenticated `/webhook` endpoint vulnerable to arbitrary spam and quota exhaustion. | Added GitHub HMAC-SHA256 signature verification (`X-Hub-Signature-256`) in [webhook.py](file:///c:/AI%20Code%20Review%20Agent/app/api/webhook.py) with development bypass if unset. |
+| **Monitoring & Probes**| No dedicated health check. | Added `/health` probe endpoint to [main.py](file:///c:/AI%20Code%20Review%20Agent/app/main.py) for Cloud Run startup/liveness checks. |
+| **Deployment Tooling** | None. | Added [deploy_cloud_run.sh](file:///c:/AI%20Code%20Review%20Agent/deploy_cloud_run.sh) and [deploy_cloud_run.ps1](file:///c:/AI%20Code%20Review%20Agent/deploy_cloud_run.ps1) with recommended flags. |
+
+---
+
+## Key Changes by Component
+
+### 1. Production Containerization
+- **[Dockerfile](file:///c:/AI%20Code%20Review%20Agent/Dockerfile)**:
+  - Base: `python:3.11-slim`
+  - Installs runtime dependencies with `--no-cache-dir`.
+  - Exposes port 8080 and binds dynamically to Cloud Run's `${PORT:-8080}`:
+    ```dockerfile
+    CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+    ```
+- **[.dockerignore](file:///c:/AI%20Code%20Review%20Agent/.dockerignore)**:
+  - Excludes `.env`, `venv/`, `.git/`, `approvals_db.json`, `tests/`, and cache directories to protect secrets and ensure slim image sizes.
+- **[requirements.txt](file:///c:/AI%20Code%20Review%20Agent/requirements.txt)**:
+  - Re-encoded to UTF-8 without BOM so Linux container builds parse dependencies properly. Added `google-cloud-firestore>=2.14.0`.
+
+### 2. Pluggable State Persistence
+- **[approval_service.py](file:///c:/AI%20Code%20Review%20Agent/app/services/approval_service.py)**:
+  - Implemented `BaseApprovalStore`, `JsonFileApprovalStore`, and `FirestoreApprovalStore`.
+  - Automatically selects `FirestoreApprovalStore` when `STORAGE_BACKEND=firestore` is set in Cloud Run.
+  - Automatically falls back to `JsonFileApprovalStore` for local development and offline unit tests.
+  - Maintained complete backwards compatibility for all existing callers.
+
+### 3. Webhook Security & Verification
+- **[webhook.py](file:///c:/AI%20Code%20Review%20Agent/app/api/webhook.py)**:
+  - Implemented `verify_github_signature(raw_body, signature_header)`.
+  - Computes `sha256` HMAC using `GITHUB_WEBHOOK_SECRET` and compares via constant-time `hmac.compare_digest`.
+  - Returns `401 Unauthorized` on invalid or spoofed webhook requests.
+
+### 4. Health Check Endpoint
+- **[main.py](file:///c:/AI%20Code%20Review%20Agent/app/main.py)**:
+  - Added `@app.get("/health")` returning:
+    ```json
+    {
+      "status": "healthy",
+      "service": "ai-code-review-agent"
+    }
+    ```
+  - Removed deprecated `add_numbers` test function.
+
+---
+
+## Verification Results
+
+### Automated Tests
+Run command:
+```bash
+python -m pytest
+```
+
+**Results:**
+- **33 passed in 18.31s** (100% pass rate)
+  - `tests/test_approval.py`: 4 passed
+  - `tests/test_approval_apply.py`: 3 passed
+  - `tests/test_approval_workflow.py`: 1 passed
+  - `tests/test_cloud_run_readiness.py`: 8 passed (New: health probe, HMAC validation, 401 on bad signature, dev bypass, firestore fallback)
+  - `tests/test_code_apply.py`: 3 passed
+  - `tests/test_code_fix.py`: 1 passed
+  - `tests/test_email_service.py`: 2 passed
+  - `tests/test_git_service.py`: 2 passed
+  - `tests/test_github_apply.py`: 2 passed
+  - `tests/test_review_service.py`: 2 passed
+  - `tests/test_secret_scanner.py`: 5 passed
+
+### Live LLM Integration
+Run command:
+```bash
+python -m tests.test_llm
+```
+**Results:** Successfully contacted Gemini API, validated `ReviewResponse` Pydantic model, and returned structured code review.
+
+---
+
+## How to Deploy to Google Cloud Run
+
+### Option A: Using the PowerShell Script (Windows)
+```powershell
+.\deploy_cloud_run.ps1 -ProjectId "YOUR_GCP_PROJECT_ID" -ServiceName "ai-code-review-agent" -Region "us-central1"
+```
+
+### Option B: Using the Bash Script (Linux/macOS)
+```bash
+chmod +x deploy_cloud_run.sh
+GCP_PROJECT_ID="YOUR_GCP_PROJECT_ID" ./deploy_cloud_run.sh
+```
+
+### Option C: Direct gcloud Command
+```bash
+gcloud run deploy ai-code-review-agent \
+  --source . \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --no-cpu-throttling \
+  --port 8080 \
+  --memory 1Gi \
+  --cpu 1 \
+  --set-env-vars "STORAGE_BACKEND=firestore,APPROVAL_FROM_EMAIL=onboarding@resend.dev"
+```
+
+> [!IMPORTANT]
+> **Post-Deployment Configuration**:
+> 1. Set `APPROVAL_BASE_URL` to `https://<YOUR-SERVICE-URL>/approval`.
+> 2. Mount your secrets using Google Secret Manager or Cloud Run environment variables (`GEMINI_API_KEY`, `GITHUB_TOKEN`, `RESEND_API_KEY`, `GITHUB_WEBHOOK_SECRET`, `APPROVAL_RECIPIENT_EMAIL`).
+> 3. In GitHub Webhook settings, point the **Payload URL** to `https://<YOUR-SERVICE-URL>/webhook` and set the **Content type** to `application/json`.

@@ -2,7 +2,8 @@
 useDefault = true
 
 [allowlist]
-description = "Ignore mock test fixtures"
+description = "Ignore mock test fixtures and demo scripts"
 paths = [
     '''tests/.*''',
+    '''create_demo_ui\.py''',
 ]
