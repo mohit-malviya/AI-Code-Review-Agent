@@ -3,8 +3,8 @@ Test script to run the AI Code Review Agent pipeline on a TypeScript file.
 """
 from unittest.mock import patch
 from app.services.git_service import SUPPORTED_EXTENSIONS
-from app.services.llm_service import review_code
-from app.services.code_fix_service import generate_code_fix
+import app.services.llm_service as llm_service
+import app.services.code_fix_service as code_fix_service
 
 
 def test_typescript_pipeline():
@@ -24,8 +24,6 @@ def test_typescript_pipeline():
     assert ".ts" in SUPPORTED_EXTENSIONS, ".ts must be in SUPPORTED_EXTENSIONS"
 
     # 2. Read the TypeScript demo file
-    # If the test is executed from a different directory, the file may not be found.
-    # We fallback to a dummy code string to avoid breaking the test runner.
     try:
         with open("tests/demo_service.ts", "r", encoding="utf-8") as f:
             ts_code = f.read()
@@ -53,13 +51,12 @@ def test_typescript_pipeline():
     }
 
     # 3. Patch the external services to prevent actual HTTP requests.
-    # By using patch as a context manager, we limit the mocking scope to this block.
-    with patch("tests.test_ts_review.review_code", return_value=mock_review_response) as mock_review, \
-         patch("tests.test_ts_review.generate_code_fix", return_value=mock_fix_response) as mock_generate_fix:
+    with patch.object(llm_service, "review_code", return_value=mock_review_response) as mock_review, \
+         patch.object(code_fix_service, "generate_code_fix", return_value=mock_fix_response) as mock_generate_fix:
 
         # Request Gemini to review the TypeScript file (Mocked)
         review_context = f"FILE: tests/demo_service.ts\n```typescript\n{ts_code}\n```"
-        review_result = review_code(review_context)
+        review_result = llm_service.review_code(review_context)
 
         issues = review_result.get("issues", [])
         assert len(issues) > 0, "Agent should detect TypeScript issues in demo_service.ts"
@@ -77,7 +74,7 @@ def test_typescript_pipeline():
 
         # 4. Generate AI code fix for the first issue (Mocked)
         first_issue = issues[0]
-        fix = generate_code_fix("tests/demo_service.ts", ts_code, first_issue)
+        fix = code_fix_service.generate_code_fix("tests/demo_service.ts", ts_code, first_issue)
 
         print("=" * 65)
         print("AI PROPOSED FIX FOR FIRST TYPESCRIPT ISSUE (MOCKED)")
