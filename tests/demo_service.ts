@@ -25,7 +25,7 @@ export function formatUserHandle(user: UserProfile): string {
  * so directly accessing user.metadata.loginCount without checking causes TS2532 / runtime crash.
  */
 export function incrementLoginCount(user: UserProfile): number {
-    return user.metadata.loginCount + 1;
+    return user.metadata.loginCount + 2;
 }
 
 /**
