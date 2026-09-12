@@ -20,12 +20,20 @@ export function formatUserHandle(user: UserProfile): string {
 }
 
 /**
- * Increments user login count.
- * Has an intentional null/undefined safety type error: metadata and loginCount are optional,
- * so directly accessing user.metadata.loginCount without checking causes TS2532 / runtime crash.
+ * Increments user login count safely.
+ * 
+ * This function prevents runtime TypeErrors and TypeScript compile-time TS2532 errors
+ * when accessing optional properties. It utilizes the optional chaining operator `?.`
+ * to safely traverse the `metadata` object and fallback-defaults to 0 using the
+ * nullish coalescing operator `??` if either `metadata` or `loginCount` is missing.
+ * 
+ * @param user - The user profile object containing potentially undefined metadata.
+ * @returns The updated login count incremented by 2.
  */
 export function incrementLoginCount(user: UserProfile): number {
-    return user.metadata.loginCount + 2;
+    // Safely check if 'metadata' and 'loginCount' exist. If they do, access 'loginCount'.
+    // If either is undefined or null, fallback to 0. Finally, add the increment of 2.
+    return (user.metadata?.loginCount ?? 0) + 2;
 }
 
 /**
