@@ -8,7 +8,7 @@ set -euo pipefail
 PROJECT_ID="${GCP_PROJECT_ID:-your-gcp-project-id}"
 SERVICE_NAME="${SERVICE_NAME:-ai-code-review-agent}"
 REGION="${GCP_REGION:-us-central1}"
-STORAGE_BACKEND="${STORAGE_BACKEND:-firestore}"
+STORAGE_BACKEND="${STORAGE_BACKEND:-json}"
 
 # Validate Project ID
 if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "your-gcp-project-id" ]]; then

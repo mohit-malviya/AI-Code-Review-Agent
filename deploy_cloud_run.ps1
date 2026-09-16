@@ -6,7 +6,7 @@ param (
     [string]$ProjectId = $env:GCP_PROJECT_ID,
     [string]$ServiceName = "ai-code-review-agent",
     [string]$Region = "us-central1",
-    [string]$StorageBackend = "firestore"
+    [string]$StorageBackend = "json"
 )
 
 if (-not $ProjectId -or $ProjectId -eq "your-gcp-project-id") {
