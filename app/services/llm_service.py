@@ -11,17 +11,24 @@ from app.models.schemas import ReviewResponse
 load_dotenv()
 
 
-api_key = os.getenv("GEMINI_API_KEY")
+def get_client() -> genai.Client:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
+    return genai.Client(api_key=api_key)
 
-if not api_key:
-    raise ValueError(
-        "GEMINI_API_KEY is not set in the .env file"
-    )
+
+class _LazyGeminiClient:
+    """
+    Lazy proxy for Google GenAI client to allow FastAPI / Cloud Run
+    health checks to boot cleanly before environment variables are injected.
+    """
+    def __getattr__(self, name):
+        real_client = get_client()
+        return getattr(real_client, name)
 
 
-client = genai.Client(
-    api_key=api_key
-)
+client = _LazyGeminiClient()
 
 
 def review_code(review_context: str) -> dict:

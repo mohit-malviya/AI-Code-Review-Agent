@@ -7,17 +7,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-
-if not GITHUB_TOKEN:
-    raise ValueError(
-        "GITHUB_TOKEN is not set in the .env file"
-    )
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
 
 # =========================================================
 # GitHub Headers
 # =========================================================
+
+def get_github_token() -> str:
+    token = os.getenv("GITHUB_TOKEN") or GITHUB_TOKEN
+    if not token:
+        raise ValueError("GITHUB_TOKEN is not configured.")
+    return token
+
 
 def get_github_headers() -> dict:
     """
@@ -26,7 +28,7 @@ def get_github_headers() -> dict:
 
     return {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {get_github_token()}",
         "X-GitHub-Api-Version": "2026-03-10",
     }
 
