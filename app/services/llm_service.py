@@ -11,11 +11,17 @@ from app.models.schemas import ReviewResponse
 load_dotenv()
 
 
+_client_instance: genai.Client | None = None
+
+
 def get_client() -> genai.Client:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not configured.")
-    return genai.Client(api_key=api_key)
+    global _client_instance
+    if _client_instance is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+        _client_instance = genai.Client(api_key=api_key)
+    return _client_instance
 
 
 class _LazyGeminiClient:
@@ -24,8 +30,7 @@ class _LazyGeminiClient:
     health checks to boot cleanly before environment variables are injected.
     """
     def __getattr__(self, name):
-        real_client = get_client()
-        return getattr(real_client, name)
+        return getattr(get_client(), name)
 
 
 client = _LazyGeminiClient()
@@ -94,8 +99,9 @@ Code to review:
 {review_context}
 """
 
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
