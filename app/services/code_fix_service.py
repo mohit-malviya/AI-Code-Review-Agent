@@ -1,3 +1,4 @@
+import os
 import json
 import re
 
@@ -83,8 +84,9 @@ Return exactly this JSON structure:
 
     try:
 
+        model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         response = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model=model,
             contents=prompt,
         )
 

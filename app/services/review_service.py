@@ -365,7 +365,8 @@ def generate_code_review(
         if (
             "401" in error_message
             or "403" in error_message
-            or "API key" in error_message
+            or "api key" in error_message.lower()
+            or "api_key" in error_message.lower()
             or "authentication"
             in error_message.lower()
         ):
