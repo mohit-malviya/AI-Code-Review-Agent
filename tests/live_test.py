@@ -12,4 +12,4 @@ print("Hello, Alex!")
 # Bug 4: The operator is wrong below. It divides instead of multiplying, causing an incorrect output.
 total_months = calculate_months(user_age) / 1 
 
-print("You are " + total_months + " months.")
+print("You are " + total_months + " months old.")
