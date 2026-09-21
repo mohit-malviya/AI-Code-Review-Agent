@@ -388,9 +388,7 @@ def generate_code_review(
 
         return {
             "summary": (
-                "The AI reviewer could not "
-                "complete the code review because "
-                "of an API error."
+                f"The AI reviewer could not complete the code review because of an API error: {error_message}"
             ),
             "issues": secret_issues,
             "review_failed": True,
